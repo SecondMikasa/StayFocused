@@ -1,4 +1,5 @@
-let seconds, breaks
+let seconds = 25 * 60;
+let breaks = 30 * 60;
 let timerIsRunning = false
 
 function createAlarm(name) {
@@ -54,7 +55,7 @@ chrome.contextMenus.create(
 chrome.contextMenus.onClicked.addListener(function (info, tab) {
     switch (info.menuItemId) {
         case "start_timer":
-            seconds = second <= 0? 25 * 60 : seconds;
+            seconds = seconds <= 0? 25 * 60 : seconds;
             breaks = breaks <= 0? 30 * 60 : breaks;
             if (timerIsRunning) {
                 clearAlarm("pomodoro_timer")

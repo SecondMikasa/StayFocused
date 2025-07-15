@@ -1,170 +1,249 @@
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === "updateSettings") {
-        // Update the session and break lengths
-        chrome.storage.local.set({
-            sessionLength: request.sessionLength,
-            breakLength: request.breakLength
-        }, () => {
-            sendResponse({ success: true });
+class PomodoroServiceWorker {
+    constructor() {
+        this.setupMessageListener();
+        this.setupAlarmListener();
+        this.initializeTimer();
+    }
+
+    initializeTimer() {
+        chrome.storage.local.get([
+            'focusTime', 'breakTime', 'longBreakTime', 'sessionsCount',
+            'currentSession', 'totalSessions', 'timeLeft', 'currentPhase',
+            'isRunning', 'isPaused', 'autoStart'
+        ], (result) => {
+            this.settings = {
+                focusTime: result.focusTime || 25,
+                breakTime: result.breakTime || 5,
+                longBreakTime: result.longBreakTime || 15,
+                sessionsCount: result.sessionsCount || 4,
+                autoStart: result.autoStart || false
+            };
+
+            this.state = {
+                currentSession: result.currentSession || 1,
+                totalSessions: result.totalSessions || this.settings.sessionsCount,
+                timeLeft: result.timeLeft || (this.settings.focusTime * 60),
+                currentPhase: result.currentPhase || 'focus',
+                isRunning: result.isRunning || false,
+                isPaused: result.isPaused || false
+            };
+
+            this.saveState();
         });
     }
-    return true; // Required for async sendResponse
-});
 
-chrome.storage.local.get(['sessionLength', 'breakLength'], (result) => {
-    let secondsInput = result.sessionLength || 25; // Default to 25 minutes if not set
-    let breaksInput = result.breakLength || 5; // Default to 5 minutes if not set
-
-    let seconds = secondsInput * 60;
-    let breaks = (secondsInput + breaksInput) * 60;
-    let timerIsRunning = false
-
-    function createAlarm(name) {
-        chrome.alarms.create(
-            name,
-            {
-                periodInMinutes: 1 / 60
-            },
-            (alarm) => {
-                console.log(alarm)
+    setupMessageListener() {
+        chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+            switch (request.action) {
+                case 'startTimer':
+                    this.startTimer();
+                    sendResponse({ success: true });
+                    break;
+                case 'pauseTimer':
+                    this.pauseTimer();
+                    sendResponse({ success: true });
+                    break;
+                case 'resetTimer':
+                    this.resetTimer();
+                    sendResponse({ success: true });
+                    break;
+                case 'updateSettings':
+                    this.updateSettings(request.settings);
+                    sendResponse({ success: true });
+                    break;
             }
-        )
+            return true;
+        });
     }
 
-    function clearAlarm(name) {
-        chrome.alarms.clear(
-            name,
-            (wasCleared) => {
-                console.log(wasCleared)
+    setupAlarmListener() {
+        chrome.alarms.onAlarm.addListener((alarm) => {
+            if (alarm.name === 'pomodoroTick') {
+                this.tick();
             }
-        )
+        });
     }
 
-    function createNotif(message) {
-        const opt = {
-            type: 'list',
-            title: 'Pomodoro Timer',
-            message: message,
-            items: [{ title: 'Pomodoro Timer', message: message }],
-            iconUrl: "icons/timer-48.png"
+    startTimer() {
+        if (!this.state.isRunning) {
+            this.state.isRunning = true;
+            this.state.isPaused = false;
+            
+            // Create alarm that fires every second
+            chrome.alarms.create('pomodoroTick', { periodInMinutes: 1/60 });
+            
+            this.updateBadge();
+            this.saveState();
+            
+            const phaseText = this.state.currentPhase === 'focus' ? 'Focus session' : 'Break time';
+            this.showNotification(`${phaseText} started!`, `Session ${this.state.currentSession} of ${this.state.totalSessions}`);
         }
-
-        chrome.notifications.create(opt)
     }
 
-    chrome.contextMenus.create(
-        {
-            id: "start_timer",
-            title: "Start Timer",
-            contexts: ["all"]
+    pauseTimer() {
+        if (this.state.isRunning) {
+            this.state.isRunning = false;
+            this.state.isPaused = true;
+            
+            chrome.alarms.clear('pomodoroTick');
+            this.updateBadge();
+            this.saveState();
+            
+            this.showNotification('Timer paused', 'Click to resume when ready');
         }
-    )
+    }
 
-    chrome.contextMenus.create(
-        {
-            id: "reset_timer",
-            title: "Reset Timer",
-            contexts: ["all"]
+    resetTimer() {
+        this.state.isRunning = false;
+        this.state.isPaused = false;
+        this.state.currentSession = 1;
+        this.state.currentPhase = 'focus';
+        this.state.timeLeft = this.settings.focusTime * 60;
+        
+        chrome.alarms.clear('pomodoroTick');
+        this.updateBadge();
+        this.saveState();
+        
+        this.showNotification('Timer reset', 'Ready for a new session');
+    }
+
+    tick() {
+        if (!this.state.isRunning) return;
+
+        this.state.timeLeft--;
+        this.updateBadge();
+        this.saveState();
+
+        if (this.state.timeLeft <= 0) {
+            this.handlePhaseComplete();
         }
-    )
+    }
 
+    handlePhaseComplete() {
+        chrome.alarms.clear('pomodoroTick');
 
-    chrome.contextMenus.onClicked.addListener(function (info, tab) {
-        switch (info.menuItemId) {
-            case "start_timer":
-                seconds = seconds <= 0 ? 25 * 60 : seconds;
-                breaks = breaks <= 0 ? 30 * 60 : breaks;
-                if (timerIsRunning) {
-                    clearAlarm("pomodoro_timer")
-                    clearAlarm("breaks_timer")
-                    createNotif("Your Timer has stopped")
-                    chrome.contextMenus.update("start_timer", {
-                        title: "Start Timer",
-                        contexts: ["all"]
-                    })
-                    chrome.action.setBadgeBackgroundColor({
-                        color: "green"
-                    })
-                    chrome.action.setBadgeText({
-                        text: "▶"
-                    })
-                    timerIsRunning = !timerIsRunning
-                    return
-                }
+        if (this.state.currentPhase === 'focus') {
+            // Focus session completed
+            this.showNotification(
+                '🎉 Focus session completed!', 
+                `Great job! Session ${this.state.currentSession} done.`
+            );
 
-                createNotif("Your Timer has started")
-                createAlarm("pomodoro_timer");
-                createAlarm("breaks_timer")
-                timerIsRunning = true
-                chrome.contextMenus.update("start_timer", {
-                    title: "Stop Timer",
-                    contexts: ["all"]
-                })
-                break;
+            // Determine break type
+            const isLongBreak = this.state.currentSession % 4 === 0;
+            this.state.currentPhase = isLongBreak ? 'longBreak' : 'shortBreak';
+            this.state.timeLeft = isLongBreak ? 
+                this.settings.longBreakTime * 60 : 
+                this.settings.breakTime * 60;
 
-            case "reset_timer":
-                seconds = 0
-                breaks = 0
-                if (timerIsRunning) {
-                    chrome.action.setBadgeText({
-                        text: "X"
-                    })
-                    chrome.action.setBadgeBackgroundColor({
-                        color: "red"
-                    })
-                    clearAlarm("pomodoro_timer")
-                    createNotif("Your Timer Has Been Reset")
-                    timerIsRunning = false
-                    chrome.contextMenus.update("start_timer", {
-                        title: "Start Timer",
-                        contexts: ["all"]
-                    })
-                }
-        }
-    })
+            if (this.settings.autoStart) {
+                this.state.isRunning = true;
+                chrome.alarms.create('pomodoroTick', { periodInMinutes: 1/60 });
+                
+                const breakType = isLongBreak ? 'Long break' : 'Short break';
+                this.showNotification(`${breakType} started automatically`, 'Time to relax!');
+            } else {
+                this.state.isRunning = false;
+                const breakType = isLongBreak ? 'long break' : 'short break';
+                this.showNotification(`Time for a ${breakType}!`, 'Click start when ready');
+            }
 
-    chrome.alarms.onAlarm.addListener((alarm) => {
-    })
+        } else {
+            // Break completed
+            const breakType = this.state.currentPhase === 'longBreak' ? 'Long break' : 'Short break';
+            this.showNotification(`${breakType} finished!`, 'Ready for the next session?');
 
-    chrome.alarms.onAlarm.addListener((alarm) => {
-        if (!timerIsRunning) {
-            return
-        }
+            this.state.currentSession++;
+            
+            if (this.state.currentSession > this.state.totalSessions) {
+                // All sessions completed
+                this.showNotification(
+                    '🏆 All sessions completed!', 
+                    `Congratulations! You completed ${this.state.totalSessions} focus sessions.`
+                );
+                this.resetTimer();
+                return;
+            }
 
-        seconds--
-        breaks--
+            // Prepare next focus session
+            this.state.currentPhase = 'focus';
+            this.state.timeLeft = this.settings.focusTime * 60;
 
-        const minLeft = Math.floor(seconds / 60) + "M"
-
-        const breakLeft = Math.floor(breaks / 60) + "M"
-
-        chrome.action.setBadgeText({
-            text: minLeft
-        })
-
-        chrome.action.setBadgeBackgroundColor({
-            color: "blue"
-        })
-
-        if (seconds <= 0) {
-            clearAlarm("pomodoro_timer")
-            createNotif("Your Timer has finished. Time to grab a break")
-            chrome.action.setBadgeBackgroundColor({
-                color: "green"
-            })
-            chrome.action.setBadgeText({
-                text: breakLeft
-            })
-            if (breaks <= 0) {
-                clearAlarm("breaks_timer")
-                createNotif("Your Break Time has finished. Your session has ended")
-                chrome.action.setBadgeBackgroundColor({
-                    color: "yellow"
-                })
-                chrome.action.setBadgeText({
-                    text: "-"
-                })
+            if (this.settings.autoStart) {
+                this.state.isRunning = true;
+                chrome.alarms.create('pomodoroTick', { periodInMinutes: 1/60 });
+                this.showNotification(
+                    'Next focus session started!', 
+                    `Session ${this.state.currentSession} of ${this.state.totalSessions}`
+                );
+            } else {
+                this.state.isRunning = false;
+                this.showNotification(
+                    'Ready for next session', 
+                    `Session ${this.state.currentSession} of ${this.state.totalSessions}`
+                );
             }
         }
-    })
-});
+
+        this.updateBadge();
+        this.saveState();
+    }
+
+    updateSettings(newSettings) {
+        this.settings = { ...this.settings, ...newSettings };
+        this.state.totalSessions = this.settings.sessionsCount;
+        
+        chrome.storage.local.set({
+            ...this.settings,
+            totalSessions: this.state.totalSessions
+        });
+        
+        this.saveState();
+    }
+
+    updateBadge() {
+        const minutes = Math.floor(this.state.timeLeft / 60);
+        const seconds = this.state.timeLeft % 60;
+        const timeText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+
+        let badgeColor = '#3498db'; // Default blue
+        let badgeText = timeText;
+
+        if (this.state.isRunning) {
+            if (this.state.currentPhase === 'focus') {
+                badgeColor = '#e74c3c'; // Red for focus
+            } else {
+                badgeColor = '#27ae60'; // Green for break
+            }
+        } else if (this.state.isPaused) {
+            badgeColor = '#f39c12'; // Orange for paused
+            badgeText = '⏸️';
+        } else {
+            badgeText = '▶️';
+        }
+
+        chrome.action.setBadgeText({ text: badgeText });
+        chrome.action.setBadgeBackgroundColor({ color: badgeColor });
+    }
+
+    showNotification(title, message) {
+        const options = {
+            type: 'basic',
+            iconUrl: 'icons/timer-48.png',
+            title: title,
+            message: message
+        };
+
+        chrome.notifications.create(options);
+    }
+
+    saveState() {
+        chrome.storage.local.set({
+            ...this.state,
+            ...this.settings
+        });
+    }
+}
+
+// Initialize the service worker
+new PomodoroServiceWorker();

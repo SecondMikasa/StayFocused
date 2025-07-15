@@ -75,12 +75,19 @@ class PomodoroTimer {
 
         chrome.storage.local.set(settings, () => {
             this.showNotification('Settings saved successfully!');
+            // Force update display after settings are saved
+            setTimeout(() => this.updateDisplay(), 100);
         });
 
         // Send settings to service worker
         chrome.runtime.sendMessage({
             action: 'updateSettings',
             settings: settings
+        }, (response) => {
+            if (response && response.success) {
+                // Update display immediately after service worker confirms update
+                this.updateDisplay();
+            }
         });
     }
 

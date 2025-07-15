@@ -193,12 +193,40 @@ class PomodoroServiceWorker {
         this.settings = { ...this.settings, ...newSettings };
         this.state.totalSessions = this.settings.sessionsCount;
         
+        // Update current timer state based on current phase
+        if (this.state.currentPhase === 'focus') {
+            // If we're in a focus session, update the time left if timer isn't running
+            // or if the new focus time is longer than current time left
+            if (!this.state.isRunning || (newSettings.focusTime * 60) > this.state.timeLeft) {
+                this.state.timeLeft = newSettings.focusTime * 60;
+            }
+        } else if (this.state.currentPhase === 'shortBreak') {
+            // Update short break time
+            if (!this.state.isRunning || (newSettings.breakTime * 60) > this.state.timeLeft) {
+                this.state.timeLeft = newSettings.breakTime * 60;
+            }
+        } else if (this.state.currentPhase === 'longBreak') {
+            // Update long break time
+            if (!this.state.isRunning || (newSettings.longBreakTime * 60) > this.state.timeLeft) {
+                this.state.timeLeft = newSettings.longBreakTime * 60;
+            }
+        }
+        
+        // If current session exceeds new total sessions, adjust it
+        if (this.state.currentSession > this.settings.sessionsCount) {
+            this.state.currentSession = this.settings.sessionsCount;
+        }
+        
         chrome.storage.local.set({
             ...this.settings,
             totalSessions: this.state.totalSessions
         });
         
+        this.updateBadge();
         this.saveState();
+        
+        // Notify that settings were applied
+        this.showNotification('Settings updated!', 'Timer has been updated with new settings');
     }
 
     updateBadge() {

@@ -1,8 +1,14 @@
 {
     "manifest_version": 3,
+<<<<<<< HEAD
     "name": "Stay Focused",
     "description": "A basic pomodoro timer extension to get your work done",
     "version": "0.0.2",
+=======
+    "name": "Stay Focused - Pomodoro Timer",
+    "description": "A comprehensive pomodoro timer extension with session control and notifications",
+    "version": "1.0.0",
+>>>>>>> e35ce4160ad349e6d4d153f8c5f9a0ad5b315b52
     "icons": {
         "16": "icons/timer-16.png",
         "32": "icons/timer-32.png",
@@ -25,5 +31,5 @@
     ],
     "background": {
         "service_worker": "service-worker.js"
-      }
+    }
 }
